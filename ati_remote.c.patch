@@ -1,0 +1,100 @@
+--- old/ati_remote.c	2007-03-18 09:52:38.000000000 -0400
++++ new/ati_remote.c	2007-03-22 19:53:07.174914676 -0400
+@@ -154,8 +154,9 @@
+ #define SEND_FLAG_COMPLETE	2
+ 
+ /* Device initialization strings */
+-static char init1[] = { 0x01, 0x00, 0x20, 0x14 };
+-static char init2[] = { 0x01, 0x00, 0x20, 0x14, 0x20, 0x20, 0x20 };
++static char init1[] = {0x80, 0x05, 0x1b, 0x15, 0x14, 0x20, 0x24, 0x15};
++static char init2[] = {0x83, 0x03};
++static char init3[] = {0x84, 0xd7, 0x020};
+ 
+ struct ati_remote {
+ 	struct input_dev *idev;
+@@ -240,6 +241,7 @@
+ 	{KIND_FILTERED, 0xe0, 0x1b, EV_KEY, KEY_D, 1},
+ 	{KIND_FILTERED, 0xe6, 0x21, EV_KEY, KEY_E, 1},
+ 	{KIND_FILTERED, 0xe8, 0x23, EV_KEY, KEY_F, 1},
++	{KIND_FILTERED, 0xf1, 0x2c, EV_KEY, KEY_I, 1},
+ 
+ 	/* "special" keys */
+ 	{KIND_FILTERED, 0xdd, 0x18, EV_KEY, KEY_KPENTER, 1},    /* "check" */
+@@ -403,10 +405,19 @@
+ 		/*
+ 		 * Decide if the table entry matches the remote input.
+ 		 */
+-		if ((((ati_remote_tbl[i].data1 & 0x0f) == (d1 & 0x0f))) &&
+-		    ((((ati_remote_tbl[i].data1 >> 4) -
+-		       (d1 >> 4) + rem) & 0x0f) == 0x0f) &&
+-		    (ati_remote_tbl[i].data2 == d2))
++		if (((((ati_remote_tbl[i].data1 & 0x0f) == (d1 & 0x0f) && 
++		      (((ati_remote_tbl[i].data1 >> 4) - (d1 >> 4) + rem) & 0x0f) == 0x0f) || 
++		      ((ati_remote_tbl[i].data1 & 0x0f) == ((d1 | 0x80) & 0x0f) && (((ati_remote_tbl[i].data1 >> 4) - ((d1 | 0x80) >> 4) + rem) & 0x0f) == 0x0f)) &&
++		     ati_remote_tbl[i].data2 == d2
++		    ) ||
++		    ((ati_remote_tbl[i].data1 & 0x0f) == ((d1 | 0x80) & 0x0f) &&
++		     (((ati_remote_tbl[i].data1 >> 4) - ((d1 | 0x80) >> 4) + rem) & 0x0f) == 0x0f &&
++		     (ati_remote_tbl[i].data2 == (d2 ^ 0x80))
++		    ) ||
++		    ((ati_remote_tbl[i].data1 & 0x0f) == ((d1 ^ 0x80) & 0x0f) &&
++		     (((ati_remote_tbl[i].data1 >> 4) - ((d1 ^ 0x80) >> 4) + rem) & 0x0f) == 0x0f &&
++		     (ati_remote_tbl[i].data2 == (d2 ^ 0x80))
++		    ))
+ 			return i;
+ 
+ 	}
+@@ -462,7 +473,7 @@
+ 	int remote_num;
+ 
+ 	/* Deal with strange looking inputs */
+-	if ( (urb->actual_length != 4) || (data[0] != 0x14) ||
++	if ( (urb->actual_length != 4) || (data[0] != 0x14 && data[0] != 0x15) ||
+ 		((data[3] & 0x0f) != 0x00) ) {
+ 		ati_remote_dump(data, urb->actual_length);
+ 		return;
+@@ -491,6 +502,32 @@
+ 		remote_num, data[1], data[2], index, ati_remote_tbl[index].code);
+ 
+ 	if (ati_remote_tbl[index].kind == KIND_LITERAL) {
++		if (data[0] == 0x15) {
++			if ((ati_remote->old_data[0] == data[1]) &&
++			    (ati_remote->old_data[1] == data[2]) &&
++			    time_before(jiffies, ati_remote->old_jiffies + msecs_to_jiffies(repeat_filter))) {
++				ati_remote->repeat_count++;
++			} else {
++				ati_remote->repeat_count = 0;
++			}
++	
++			ati_remote->old_data[0] = data[1];
++			ati_remote->old_data[1] = data[2];
++			ati_remote->old_jiffies = jiffies;
++			
++			if ((ati_remote->repeat_count > 0)
++			&& (ati_remote->repeat_count < 3))
++				return;
++			
++			if (ati_remote->repeat_count >= 3) {
++				input_event(dev, ati_remote_tbl[index].type,
++					ati_remote_tbl[index].code, 0);
++				input_sync(dev);
++				ati_remote->repeat_count = 0;
++				return;
++			}
++		}
++
+ 		input_event(dev, ati_remote_tbl[index].type,
+ 			ati_remote_tbl[index].code,
+ 			ati_remote_tbl[index].value);
+@@ -694,8 +731,9 @@
+ 	ati_remote->out_urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+ 
+ 	/* send initialization strings */
+-	if ((ati_remote_sendpacket(ati_remote, 0x8004, init1)) ||
+-	    (ati_remote_sendpacket(ati_remote, 0x8007, init2))) {
++	if ((ati_remote_sendpacket(ati_remote, 0x8007, init1)) ||
++	    (ati_remote_sendpacket(ati_remote, 0x8002, init2)) ||
++	    (ati_remote_sendpacket(ati_remote, 0x8003, init3))) {
+ 		dev_err(&ati_remote->interface->dev,
+ 			 "Initializing ati_remote hardware failed.\n");
+ 		return -EIO;
