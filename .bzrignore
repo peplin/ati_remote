@@ -1,0 +1,4 @@
+*.ko
+*.mod.c
+.tmp*/
+.ati_remote*
