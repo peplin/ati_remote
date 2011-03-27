@@ -2,3 +2,4 @@
 *.mod.c
 .tmp*/
 .ati_remote*
+modules.order
